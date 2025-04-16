@@ -12,13 +12,15 @@ public class PathSolver
         public Vector2Int pos;
         public Vector2Int goal;
         public Vector2Int lastMove;
+        public bool isDone;
 
-        public Robot(int id, Vector2Int pos, Vector2Int goal, Vector2Int lastMove)
+        public Robot(int id, Vector2Int pos, Vector2Int goal, Vector2Int lastMove, bool isDone)
         {
             this.id = id;
             this.pos = pos;
             this.goal = goal;
             this.lastMove = lastMove;
+            this.isDone = isDone;
         }
     }
 
@@ -115,6 +117,21 @@ public class PathSolver
             }
         }
 
+        bool[][] gridWithRobots = new bool[grid.Length][];
+        for (int i = 0; i < grid.Length; i++)
+        {
+            gridWithRobots[i] = new bool[grid[0].Length];
+            for (int j = 0; j < grid[0].Length; j++)
+            {
+                gridWithRobots[i][j] = true;
+            }
+        }
+        foreach (Robot robot in robots)
+        {
+            if (robot.isDone)
+                grid[robot.pos.x][robot.pos.y] = false;
+        }
+
         List<IntVar> costVars = new List<IntVar>();
         for (int i = 0; i < robotCount; i++)
         {
@@ -124,7 +141,7 @@ public class PathSolver
             int[] candidateCosts = new int[n];
             for (int j = 0; j < n; j++)
             {
-                int pathLength = ComputeShortestPath(grid, movesForRobot[j], robot.goal) * 2;
+                int pathLength = ComputeShortestPath(gridWithRobots, movesForRobot[j], robot.goal) * 2;
                 int candidateCost = (pathLength >= 0) ? pathLength : gridWidth * gridHeight;
 
                 if (movesForRobot[j] == robot.pos && movesForRobot[j] != robot.goal && n > 1)

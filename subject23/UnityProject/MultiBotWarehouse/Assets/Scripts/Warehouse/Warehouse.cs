@@ -39,6 +39,9 @@ public class Warehouse : MonoBehaviour
         public Vector2Int goal;
         [NonSerialized]
         public List<int> assignment;
+
+        [NonSerialized]
+        public bool isDone = true;
     }
 
     [Header("Setup")]
@@ -132,57 +135,78 @@ public class Warehouse : MonoBehaviour
 
         roleJobs = new Dictionary<Role, Job[]>();
         flatRoleJobs = new Dictionary<Role, Task[]>();
+
+        for (int i = 0; i < robots.Length; i++)
+        {
+            robots[i].id = i;
+            robots[i].goal = GetGridPosFromWorldPos(robots[i].controller.transform.position);
+        }
     }
 
     public void OnClickProduceButton()
     {
-        StartProduce();
+        StartCoroutine(WarehouseRuntime());
     }
 
-    private void StartProduce()
+    private IEnumerator WarehouseRuntime()
     {
         string[][] orders = clientOrderInteraction.orders.Select(ele => ele.order.ToArray()).ToArray();
-
-        roleJobs.Add(Role.Refill, GenerateRefillJobs());
-        flatRoleJobs.Add(Role.Refill, roleJobs[Role.Refill].Select(ele => ele.tasks).Aggregate(new List<Task>(), (acc, ele) => { acc.AddRange(ele); return acc; }).ToArray());
-
-        //roleJobs.Add(Role.Order, GenerateOrderJobs(orders));
-        //flatRoleJobs.Add(Role.Order, roleJobs[Role.Order].Select(ele => ele.tasks).Aggregate(new List<Task>(), (acc, ele) => { acc.AddRange(ele); return acc; }).ToArray());
-
+        int maxAmountOfItem = GetMaxOccurrences(orders);
         int[][] travelTimes = GenerateTravelTimes();
 
-        assignments.Add(Robot.Role.Refill, PlanningSolver.Solve(assignedRobots[Robot.Role.Refill].Count, roleJobs[Role.Refill], travelTimes, verbose: false));
-        //assignments.Add(Robot.Role.Order, Solver.Solve(assignedRobots[Robot.Role.Order].Count, roleJobs[Role.Order], travelTimes, verbose: false));
+        yield return null;
 
-        int id = 0;
-
-        for (int i = 0; i < assignedRobots[Role.Refill].Count; i++)
+        for (int n = 0; n < maxAmountOfItem; n++)
         {
-            Robot refillRobot = assignedRobots[Robot.Role.Refill][i];
+            roleJobs.Add(Role.Refill, GenerateRefillJobs());
+            flatRoleJobs.Add(Role.Refill, roleJobs[Role.Refill].Select(ele => ele.tasks).Aggregate(new List<Task>(), (acc, ele) => { acc.AddRange(ele); return acc; }).ToArray());
 
-            refillRobot.assignment = assignments[Robot.Role.Refill][i].ToList();
-            refillRobot.homePosition = GetGridPosFromWorldPos(refillRobot.controller.transform.position);
-            refillRobot.id = id++;
+            yield return null;
 
-            StartCoroutine(Runtime(refillRobot));
+            assignments.Add(Robot.Role.Refill, PlanningSolver.Solve(assignedRobots[Robot.Role.Refill].Count, roleJobs[Role.Refill], travelTimes, verbose: false));
+
+            yield return null;
+
+            for (int i = 0; i < assignedRobots[Role.Refill].Count; i++)
+            {
+                Robot refillRobot = assignedRobots[Robot.Role.Refill][i];
+
+                refillRobot.assignment = assignments[Robot.Role.Refill][i].ToList();
+                refillRobot.homePosition = GetGridPosFromWorldPos(refillRobot.controller.transform.position);
+
+                StartCoroutine(RobotRuntime(refillRobot));
+            }
+
+            while (robots.Where(robot => !robot.isDone).Count() > 0)
+                yield return new WaitForSeconds(1);
         }
 
-        /*
+        roleJobs.Add(Role.Order, GenerateOrderJobs(orders));
+        flatRoleJobs.Add(Role.Order, roleJobs[Role.Order].Select(ele => ele.tasks).Aggregate(new List<Task>(), (acc, ele) => { acc.AddRange(ele); return acc; }).ToArray());
+
+        yield return null;
+
+        assignments.Add(Robot.Role.Order, PlanningSolver.Solve(assignedRobots[Robot.Role.Order].Count, roleJobs[Role.Order], travelTimes, verbose: false));
+
+        yield return null;
+
         for (int i = 0; i < assignedRobots[Role.Refill].Count; i++)
         {
             Robot orderRobot = assignedRobots[Robot.Role.Order][i];
 
             orderRobot.assignment = assignments[Robot.Role.Order][i].ToList();
             orderRobot.homePosition = GetGridPosFromWorldPos(orderRobot.controller.transform.position);
-            orderRobot.id = id++;
 
-            StartCoroutine(RefillRuntime(orderRobot));
+            StartCoroutine(RobotRuntime(orderRobot));
         }
-        */
+
+        Debug.Log("Success!");
     }
 
-    private IEnumerator Runtime(Robot robot)
+    private IEnumerator RobotRuntime(Robot robot)
     {
+        robot.isDone = false;
+
         while (robot.assignment.Count > 0)
         {
             Vector2Int currentPos = GetGridPosFromWorldPos(robot.controller.transform.position);
@@ -240,12 +264,13 @@ public class Warehouse : MonoBehaviour
             yield return null;
         }
 
+        robot.isDone = true;
         robot.controller.enabled = false;
     }
 
     private void computeGoals()
     {
-        robotGoals = PathSolver.ComputeNextMoves(grid, forbiddenGoals, robots.Select(robot => new PathSolver.Robot(robot.id, GetGridPosFromWorldPos(robot.controller.transform.position), robot.goal, robotGoals != null ? robotGoals[robot.id] : Vector2Int.one * int.MaxValue)).ToArray());
+        robotGoals = PathSolver.ComputeNextMoves(grid, forbiddenGoals, robots.Select(robot => new PathSolver.Robot(robot.id, GetGridPosFromWorldPos(robot.controller.transform.position), robot.goal, robotGoals != null ? robotGoals[robot.id] : Vector2Int.one * int.MaxValue, robot.isDone)).ToArray());
     }
 
     private PlanningSolver.Job[] GenerateRefillJobs()
@@ -352,5 +377,21 @@ public class Warehouse : MonoBehaviour
         int rem;
         int div = Math.DivRem(id, gridSize.y, out rem);
         return new Vector2Int(div, rem);
+    }
+
+    private static int GetMaxOccurrences(string[][] data)
+    {
+        var flattened = data.SelectMany(subArray => subArray);
+
+        Dictionary<string, int> frequencyMap = new Dictionary<string, int>();
+        foreach (var str in flattened)
+        {
+            if (frequencyMap.ContainsKey(str))
+                frequencyMap[str]++;
+            else
+                frequencyMap[str] = 1;
+        }
+
+        return frequencyMap.Values.Max();
     }
 }
